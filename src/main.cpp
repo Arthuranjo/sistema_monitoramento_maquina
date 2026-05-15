@@ -39,7 +39,50 @@ float minTemp = 20.0;
 
 // ================= MQTT CALLBACK =================
 void callback(char* topic, byte* payload, unsigned int length) {
-  // não usado
+
+  String msg = "";
+
+  for (int i = 0; i < length; i++) {
+    msg += (char)payload[i];
+  }
+
+  Serial.print("Mensagem recebida: ");
+  Serial.println(msg);
+
+  // ================= TEMPERATURA =================
+  if (String(topic) == "industria4/tempMax") {
+    maxTemp = msg.toFloat();
+
+    Serial.print("Novo limite temp max: ");
+    Serial.println(maxTemp);
+  }
+
+  if (String(topic) == "industria4/tempMin") {
+    minTemp = msg.toFloat();
+
+    Serial.print("Novo limite temp min: ");
+    Serial.println(minTemp);
+  }
+
+  // ================= VIBRAÇÃO =================
+  if (String(topic) == "industria4/vibLimit") {
+    vibrationLimit = msg.toFloat();
+
+    Serial.print("Novo limite vibracao: ");
+    Serial.println(vibrationLimit);
+  }
+
+  // ================= BUZZER =================
+  if (String(topic) == "industria4/buzzer") {
+
+    if (msg == "off") {
+      ledcWriteTone(BUZZER_PIN, 0);
+    }
+
+    if (msg == "on") {
+      ledcWriteTone(BUZZER_PIN, 1000);
+    }
+  }
 }
 
 // ================= WIFI =================
@@ -76,6 +119,11 @@ void reconnectMQTT() {
     if (client.connect(clientId.c_str(), mqtt_user, mqtt_pass)) {
 
       Serial.println(" conectado!");
+
+      client.subscribe("industria4/tempMax");
+      client.subscribe("industria4/tempMin");
+      client.subscribe("industria4/vibLimit");
+      client.subscribe("industria4/buzzer");
 
       display.clearDisplay();
       display.setCursor(0, 0);
