@@ -8,7 +8,7 @@
 #include <PubSubClient.h>
 #include <WiFiClientSecure.h>
 #include <Arduino.h>
-
+//teste
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
