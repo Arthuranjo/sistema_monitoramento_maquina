@@ -1,3 +1,4 @@
+
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
@@ -8,34 +9,55 @@
 #include <PubSubClient.h>
 #include <WiFiClientSecure.h>
 #include <Arduino.h>
-//teste
+
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
 #define BUZZER_PIN 18
 
-// WiFi
+// ================= WIFI =================
 const char* ssid = "Wokwi-GUEST";
 const char* password = "";
 
-// ================= EMQX CLOUD MQTT =================
+// ================= MQTT =================
 const char* mqtt_server = "hfb72712.ala.eu-central-1.emqxsl.com";
 const int mqtt_port = 8883;
 const char* mqtt_user = "esp32";
 const char* mqtt_pass = "123456";
 
-// TLS client
+// ================= CLIENT =================
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
 
-// Devices
+// ================= DEVICES =================
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 Adafruit_MPU6050 mpu;
 
-// Limites
+// ================= LIMITES =================
 float vibrationLimit = 2.5;
 float maxTemp = 40.0;
 float minTemp = 20.0;
+
+// ================= VARIÁVEIS CONTROLADAS =================
+float currentTemp = 25.0;
+float currentVibration = 1.0;
+
+float tempBase = 0;
+float vibBase = 0;
+
+float lastSensorTemp = 0;
+float lastSensorVib = 0;
+
+bool tempControlled = false;
+bool vibControlled = false;
+
+bool tempLocked = false;
+bool vibLocked = false;
+
+unsigned long tempControlTime = 0;
+unsigned long vibControlTime = 0;
+
+const int CONTROL_DURATION = 5000;
 
 // ================= MQTT CALLBACK =================
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -51,6 +73,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
   // ================= TEMPERATURA =================
   if (String(topic) == "industria4/tempMax") {
+
     maxTemp = msg.toFloat();
 
     Serial.print("Novo limite temp max: ");
@@ -58,6 +81,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 
   if (String(topic) == "industria4/tempMin") {
+
     minTemp = msg.toFloat();
 
     Serial.print("Novo limite temp min: ");
@@ -66,6 +90,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
   // ================= VIBRAÇÃO =================
   if (String(topic) == "industria4/vibLimit") {
+
     vibrationLimit = msg.toFloat();
 
     Serial.print("Novo limite vibracao: ");
@@ -82,6 +107,71 @@ void callback(char* topic, byte* payload, unsigned int length) {
     if (msg == "on") {
       ledcWriteTone(BUZZER_PIN, 1000);
     }
+  }
+
+  // ================= CONTROLE TEMPERATURA =================
+  if (String(topic) == "industria4/control/temp") {
+
+    Serial.println("CONTROLANDO TEMPERATURA");
+
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("CONTROLANDO");
+    display.println("TEMPERATURA");
+    display.display();
+
+    delay(3000);
+
+    // simula correção
+    tempControlled = true;
+    tempControlTime = millis();
+    currentTemp = 30.0;
+    tempLocked = true;
+
+    currentTemp = 30.0;
+    tempLocked = true;
+
+    // 🔥 salva valor REAL do sensor
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+    lastSensorTemp = temp.temperature;
+
+    Serial.println("TEMPERATURA NORMALIZADA");
+  }
+
+  // ================= CONTROLE VIBRAÇÃO =================
+  if (String(topic) == "industria4/control/vib") {
+
+    Serial.println("CONTROLANDO VIBRACAO");
+
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("CONTROLANDO");
+    display.println("VIBRACAO");
+    display.display();
+
+    delay(3000);
+
+    // simula redução
+    vibControlled = true;
+    vibControlTime = millis();
+
+    currentVibration = 1.2;
+    vibLocked = true;
+
+    currentVibration = 1.2;
+    vibLocked = true;
+
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+
+    lastSensorVib = sqrt(
+      (a.acceleration.x * a.acceleration.x) +
+      (a.acceleration.y * a.acceleration.y) +
+      (a.acceleration.z * a.acceleration.z)
+    ) / 9.81;
+
+    Serial.println("VIBRACAO NORMALIZADA");
   }
 }
 
@@ -106,7 +196,7 @@ void setup_wifi() {
   Serial.println(WiFi.localIP());
 }
 
-// ================= MQTT RECONNECT =================
+// ================= MQTT =================
 void reconnectMQTT() {
 
   while (!client.connected()) {
@@ -124,6 +214,9 @@ void reconnectMQTT() {
       client.subscribe("industria4/tempMin");
       client.subscribe("industria4/vibLimit");
       client.subscribe("industria4/buzzer");
+
+      client.subscribe("industria4/control/temp");
+      client.subscribe("industria4/control/vib");
 
       display.clearDisplay();
       display.setCursor(0, 0);
@@ -155,7 +248,6 @@ void setup() {
 
   setup_wifi();
 
-  // 🔐 necessário para EMQX TLS no Wokwi
   espClient.setInsecure();
 
   client.setServer(mqtt_server, mqtt_port);
@@ -168,7 +260,7 @@ void setup() {
 
   Wire.begin(21, 22);
 
-  // OLED
+  // ================= OLED =================
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
 
     Serial.println("Falha OLED");
@@ -182,7 +274,7 @@ void setup() {
 
   display.setTextColor(WHITE);
 
-  // MPU6050
+  // ================= MPU =================
   if (!mpu.begin()) {
 
     Serial.println("MPU nao encontrado");
@@ -222,22 +314,59 @@ void loop() {
 
   mpu.getEvent(&a, &g, &temp);
 
-  // Vibração
-  float vibration = sqrt(
+    // ================= LIBERA CONTROLE =================
+  if (tempControlled && millis() - tempControlTime > CONTROL_DURATION) {
+    tempControlled = false;
+  }
+
+  if (vibControlled && millis() - vibControlTime > CONTROL_DURATION) {
+    vibControlled = false;
+  }
+
+  // ================= TEMPERATURA =================
+  if (!tempControlled) {
+
+  float sensorTemp = temp.temperature;
+
+  if (tempLocked){
+
+    if (abs(sensorTemp - lastSensorTemp) > 2.0) {
+      tempLocked = false;
+    }
+
+  } else{
+    currentTemp = sensorTemp;
+  }
+  // só atualiza se houver mudança REAL no sensor
+  
+  }
+  // ================= VIBRAÇÃO =================
+  if (!vibControlled) {
+
+  float sensorVib = sqrt(
     (a.acceleration.x * a.acceleration.x) +
     (a.acceleration.y * a.acceleration.y) +
     (a.acceleration.z * a.acceleration.z)
   ) / 9.81;
 
-  // Temperatura
-  float temperature = temp.temperature;
+  if (vibLocked) {
 
-  // Alertas
-  bool vibrationAlert = vibration > vibrationLimit;
-  bool highTempAlert = temperature > maxTemp;
-  bool lowTempAlert = temperature < minTemp;
+    if (abs(sensorVib - lastSensorVib) > 0.2) {
+      vibLocked = false;
+      }
+    } else {
+      currentVibration = sensorVib;
+    }
+  }
 
-  // OLED
+  // ================= ALERTAS =================
+  bool vibrationAlert = currentVibration > vibrationLimit;
+
+  bool highTempAlert = currentTemp > maxTemp;
+
+  bool lowTempAlert = currentTemp < minTemp;
+
+  // ================= OLED =================
   display.clearDisplay();
 
   display.setCursor(0, 0);
@@ -245,12 +374,12 @@ void loop() {
 
   display.setCursor(0, 18);
   display.print("Temp: ");
-  display.print(temperature);
+  display.print(currentTemp);
   display.println(" C");
 
   display.setCursor(0, 33);
   display.print("Vib: ");
-  display.print(vibration);
+  display.print(currentVibration);
   display.println(" g");
 
   // ================= MQTT SEND =================
@@ -262,13 +391,13 @@ void loop() {
 
     char tempString[8];
 
-    dtostrf(temperature, 1, 2, tempString);
+    dtostrf(currentTemp, 1, 2, tempString);
 
     client.publish("industria4/temperatura", tempString);
 
     char vibString[8];
 
-    dtostrf(vibration, 1, 2, vibString);
+    dtostrf(currentVibration, 1, 2, vibString);
 
     client.publish("industria4/vibracao", vibString);
   }
@@ -276,7 +405,6 @@ void loop() {
   // ================= ALERTAS =================
   if (vibrationAlert || highTempAlert || lowTempAlert) {
 
-    // Liga buzzer
     ledcWriteTone(BUZZER_PIN, 1000);
 
     display.setCursor(0, 50);
@@ -296,7 +424,6 @@ void loop() {
 
   } else {
 
-    // Desliga buzzer
     ledcWriteTone(BUZZER_PIN, 0);
 
     display.setCursor(0, 50);
@@ -308,10 +435,10 @@ void loop() {
 
   // ================= SERIAL =================
   Serial.print("Temp: ");
-  Serial.print(temperature);
+  Serial.print(currentTemp);
 
   Serial.print(" | Vib: ");
-  Serial.print(vibration);
+  Serial.print(currentVibration);
 
   if (vibrationAlert) {
     Serial.print(" | ALERTA VIB");
